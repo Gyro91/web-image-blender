@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Image Layer Editor</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="canvasdiv">
+    <canvas id="canvas" width="800" height="600"></canvas>
+</div>
+
+<div id="controldiv">
+    <h2>Controls</h2>
+
+    <div class="control-group">
+        <a href="#" id="addbackground">+</a>
+        <span> Add Background</span>
+    </div>
+    <div class="control-group">
+        <a href="#" id="addimage">+</a>
+        <span> Add Image</span>
+    </div>
+
+    <div class="control-group">
+        <label for="opac">Opacity:</label>
+        <input type="range" id="opac" min="0" max="100" value="100">
+        <span id="opac-value">100%</span>
+    </div>
+
+    <div class="control-group">
+        <label for="imageLoader">Upload Image:</label>
+        <input type="file" id="imageLoader" accept="image/*">
+    </div>
+
+    <div id="layers">
+        <h3>Layers</h3>
+        <!-- Layers will be added here dynamically -->
+    </div>
+</div>
+
+<script src="script.js"></script>
+</body>
+</html>
