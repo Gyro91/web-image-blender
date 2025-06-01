@@ -1,9 +1,10 @@
-let backgroundPixelData;
+// Global variables
 let backgroundImage;
 let foregroundImages = [];
-let foregroundPixelDataImages = [];
-let backgroundImageAlpha = 1;
 let isBackgroundSet = false;
+let layerCount = 0;
+let layerElements = [];
+let draggedItem = null;
 
 document.addEventListener('DOMContentLoaded', function() {
     const canvas = document.getElementById('canvas');
@@ -18,22 +19,20 @@ document.addEventListener('DOMContentLoaded', function() {
             const img = new Image();
             img.onload = function() {
                 if (fileInput.dataset.type === 'background') {
-                    // Prepare off-screen canvas
-                    const offCanvas = document.createElement('canvas');
-                    const offCtx = offCanvas.getContext('2d');
-                    offCanvas.width = img.width;
-                    offCanvas.height = img.height;
-                    offCtx.drawImage(img, 0, 0);
-
-                    // Extract background pixel data
-                    backgroundPixelData = offCtx.getImageData(0, 0, img.width, img.height).data;
+                    // Set background image
                     backgroundImage = img;
                     isBackgroundSet = true;
+
                     // Reset foreground images if present
                     foregroundImages = [];
-                    foregroundPixelDataImages = [];
 
-                    // Draw background to main canvas, scaling to canvas size
+                    // Reset layer count
+                    layerCount = 0;
+
+                    // Update layers panel
+                    updateLayersPanel('background', img);
+
+                    // Draw background to main canvas
                     canvas.width = img.width;
                     canvas.height = img.height;
                     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -45,32 +44,15 @@ document.addEventListener('DOMContentLoaded', function() {
                         return;
                     }
 
-                    // Prepare off-screen canvas for foreground
-                    const offCanvas = document.createElement('canvas');
-                    const offCtx = offCanvas.getContext('2d');
-                    offCanvas.width = img.width;
-                    offCanvas.height = img.height;
-                    offCtx.drawImage(img, 0, 0);
-                    const imgPixelData = offCtx.getImageData(0, 0, img.width, img.height).data;
-
+                    // Add foreground image
                     foregroundImages.push(img);
-                    foregroundPixelDataImages.push(imgPixelData);
 
-                    const bgWidth = backgroundImage.width;
-                    const bgHeight = backgroundImage.height;
+                    // Increment layer count and update layers panel
+                    layerCount++;
+                    updateLayersPanel('layer' + layerCount, img);
 
-                    // Start with background pixel data as base
-                    let blended = blend(backgroundPixelData, imgPixelData, img, bgWidth);
-
-                    for (let i = 0; i < foregroundImages.length; i++) {
-                        blended = blend(blended, foregroundPixelDataImages[i], foregroundImages[i], bgWidth);
-                    }
-
-                    // Draw the blended image onto the canvas
-                    const blendedImage = new ImageData(blended, bgWidth, bgHeight);
-                    canvas.width = bgWidth;
-                    canvas.height = bgHeight;
-                    ctx.putImageData(blendedImage, 0, 0);
+                    // Update canvas with new layer
+                    updateCanvas();
                 }
             };
             img.src = event.target.result;
@@ -91,23 +73,235 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 });
 
-function blend(backgroundPixelData, imgPixelData, img, bgWidth) {
-    const blended = new Uint8ClampedArray(backgroundPixelData);
+function updateLayersPanel(layerName, img) {
+    const layersPanel = document.getElementById('layers');
 
-    for (let y = 0; y < img.height; y++) {
-        for (let x = 0; x < img.width; x++) {
-            const foregroundIndex = (y * img.width + x) * 4;
-            const backgroundIndex = (y * bgWidth + x) * 4;
+    // Create a new layer item
+    const layerItem = document.createElement('div');
+    layerItem.className = 'layer-item';
+    layerItem.dataset.name = layerName;
+    layerItem.draggable = true;
 
-            const alphaA = imgPixelData[foregroundIndex + 3] / 255;
+    // Create a small canvas for the thumbnail
+    const thumbCanvas = document.createElement('canvas');
+    thumbCanvas.width = 50;
+    thumbCanvas.height = 50;
+    const thumbCtx = thumbCanvas.getContext('2d');
 
-            for (let c = 0; c < 3; c++) { // R, G, B
-                blended[backgroundIndex + c] = imgPixelData[foregroundIndex + c] * alphaA + backgroundPixelData[backgroundIndex + c] * (1 - alphaA);
-            }
+    // Calculate thumbnail dimensions (maintaining aspect ratio)
+    const aspectRatio = img.width / img.height;
+    let thumbWidth, thumbHeight;
 
-            blended[backgroundIndex + 3] = 255; // Fully opaque result
-        }
+    if (aspectRatio >= 1) {
+        // Wider than tall
+        thumbWidth = 50;
+        thumbHeight = 50 / aspectRatio;
+    } else {
+        // Taller than wide
+        thumbHeight = 50;
+        thumbWidth = 50 * aspectRatio;
     }
 
-    return blended;
+    // Center the image in the thumbnail
+    const xOffset = (50 - thumbWidth) / 2;
+    const yOffset = (50 - thumbHeight) / 2;
+
+    // Draw the image to the thumbnail canvas
+    thumbCtx.drawImage(img, xOffset, yOffset, thumbWidth, thumbHeight);
+
+    // Create label for the layer
+    const layerLabel = document.createElement('span');
+    layerLabel.textContent = layerName === 'background' ? 'Background' : 'Layer ' + (layerName.replace('layer', ''));
+
+    // Add elements to the layer item
+    layerItem.appendChild(thumbCanvas);
+    layerItem.appendChild(layerLabel);
+
+    // Add drag event listeners
+    layerItem.addEventListener('dragstart', handleDragStart);
+    layerItem.addEventListener('dragend', handleDragEnd);
+
+    // Add to the beginning if background, otherwise at the top
+    if (layerName === 'background') {
+        // Clear existing layers when setting a new background
+        layersPanel.innerHTML = '<h2>Layers</h2>';
+        layerElements = [layerItem];
+        layersPanel.appendChild(layerItem);
+    } else {
+        // Insert new layer at the top (after the layers heading)
+        if (layersPanel.childElementCount > 1) {
+            layersPanel.insertBefore(layerItem, layersPanel.children[1]);
+        } else {
+            layersPanel.appendChild(layerItem);
+        }
+        // Insert at the beginning of layerElements (after background)
+        layerElements.splice(1, 0, layerItem);
+    }
+}
+
+function handleDragStart(e) {
+    // Prevent dragging the background layer
+    if (this.dataset.name === 'background') {
+        e.preventDefault();
+        return false;
+    }
+
+    // Store the dragged element
+    draggedItem = this;
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/html', this.outerHTML);
+
+    // Add dragging class for visual feedback
+    this.classList.add('dragging');
+
+    // Set up the layers panel to accept drops
+    const layersPanel = document.getElementById('layers');
+    layersPanel.addEventListener('dragover', handleDragOver);
+    layersPanel.addEventListener('drop', handleDrop);
+
+    // Set up each layer item to handle being dragged over
+    document.querySelectorAll('.layer-item').forEach(item => {
+        if (item !== this && item.dataset.name !== 'background') {
+            item.addEventListener('dragenter', handleDragEnter);
+            item.addEventListener('dragleave', handleDragLeave);
+        }
+    });
+}
+
+function handleDragEnd(e) {
+    // Remove dragging class
+    this.classList.remove('dragging');
+
+    // Clean up event listeners
+    const layersPanel = document.getElementById('layers');
+    layersPanel.removeEventListener('dragover', handleDragOver);
+    layersPanel.removeEventListener('drop', handleDrop);
+
+    document.querySelectorAll('.layer-item').forEach(item => {
+        item.removeEventListener('dragenter', handleDragEnter);
+        item.removeEventListener('dragleave', handleDragLeave);
+    });
+
+    // Reset the draggedItem
+    draggedItem = null;
+}
+
+function handleDragOver(e) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    return false;
+}
+
+function handleDragEnter(e) {
+    this.classList.add('drag-over');
+}
+
+function handleDragLeave(e) {
+    this.classList.remove('drag-over');
+}
+
+function handleDrop(e) {
+    e.preventDefault();
+    e.stopPropagation();
+
+    // Remove drag-over class from all items
+    document.querySelectorAll('.layer-item').forEach(item => {
+        item.classList.remove('drag-over');
+    });
+
+    // Determine where to drop the item
+    let dropTarget = e.target;
+
+    // Find the layer-item container if we're on a child element
+    while (dropTarget && !dropTarget.classList.contains('layer-item') && dropTarget.id !== 'layers') {
+        dropTarget = dropTarget.parentNode;
+    }
+
+    // Only proceed if we're not dropping onto the dragged item itself
+    // and not dropping onto the background
+    if (dropTarget &&
+        dropTarget !== draggedItem &&
+        dropTarget.classList.contains('layer-item') &&
+        dropTarget.dataset.name !== 'background') {
+
+        // Update the DOM order - insert the dragged item before or after the drop target
+        const items = Array.from(document.querySelectorAll('.layer-item'));
+        const draggedIndex = items.indexOf(draggedItem);
+        const dropIndex = items.indexOf(dropTarget);
+
+        if (draggedIndex > dropIndex) {
+            // Moving up - insert before
+            dropTarget.parentNode.insertBefore(draggedItem, dropTarget);
+        } else {
+            // Moving down - insert after
+            dropTarget.parentNode.insertBefore(draggedItem, dropTarget.nextSibling);
+        }
+
+        // Update the layerElements array to match the new DOM order
+        layerElements = Array.from(document.querySelectorAll('.layer-item'));
+
+        // Redraw the canvas with the new layer order
+        updateCanvas();
+    } else if (dropTarget && dropTarget.id === 'layers') {
+        // Dropping directly onto the layers panel (not on a specific layer)
+        // Add to the top of the layers (after the heading)
+        const layersPanel = document.getElementById('layers');
+        if (layersPanel.childElementCount > 1) {
+            layersPanel.insertBefore(draggedItem, layersPanel.children[1]);
+        } else {
+            layersPanel.appendChild(draggedItem);
+        }
+
+        // Update the layerElements array
+        layerElements = Array.from(document.querySelectorAll('.layer-item'));
+
+        // Redraw canvas
+        updateCanvas();
+    }
+
+    return false;
+}
+
+function updateCanvas() {
+    // If no background is set, there's nothing to do
+    if (!isBackgroundSet) return;
+
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+
+    // Set canvas dimensions
+    canvas.width = backgroundImage.width;
+    canvas.height = backgroundImage.height;
+
+    // Clear canvas
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Start by drawing the background
+    ctx.drawImage(backgroundImage, 0, 0);
+
+    // Get the layer order from the DOM
+    const layerOrder = [];
+
+    // Get all layer items from the DOM
+    const layerItems = document.querySelectorAll('.layer-item');
+
+    // Process each layer (skip background)
+    layerItems.forEach(item => {
+        if (item.dataset.name !== 'background') {
+            const layerNumber = parseInt(item.dataset.name.replace('layer', ''));
+            layerOrder.push(layerNumber - 1); // Convert to 0-based index
+        }
+    });
+
+    // Draw each layer in reverse order (from bottom to top)
+    // This ensures proper visual stacking
+    for (let i = layerOrder.length - 1; i >= 0; i--) {
+        const index = layerOrder[i];
+        if (index >= 0 && index < foregroundImages.length) {
+            const img = foregroundImages[index];
+
+            // Draw the image with default compositing (source-over)
+            ctx.drawImage(img, 0, 0);
+        }
+    }
 }
